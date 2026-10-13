@@ -2839,7 +2839,13 @@ Bool W3DShaderManager::testMinimumRequirements(ChipsetType *videoChipType, CpuTy
 		*cpuFreq=CPUDetectClass::Get_Processor_Speed();
 
 	if (numRAM)
-		*numRAM=CPUDetectClass::Get_Total_Physical_Memory();
+	{
+		// numRAM is a signed 32-bit value. Any machine with 2GB or more of RAM would
+		// otherwise wrap negative here, which makes GameLOD believe the system has
+		// less than 256MB and silently drops the auto-detected detail level to LOW.
+		unsigned totalPhys = CPUDetectClass::Get_Total_Physical_Memory();
+		*numRAM = (totalPhys > 0x7FFFFFFFu) ? 0x7FFFFFFF : (Int)totalPhys;
+	}
 
 	if (intBenchIndex && floatBenchIndex && memBenchIndex)
 	{

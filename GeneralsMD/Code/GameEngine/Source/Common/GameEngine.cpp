@@ -881,7 +881,13 @@ void GameEngine::execute( void )
 					  DWORD limit = (1000.0f/m_maxFPS)-1;
 					  while (TheGlobalData->m_useFpsLimit && (now - prevTime) < limit) 
 					  {
-						  ::Sleep(0);
+						  // timeBeginPeriod(1) is active for the life of the engine, so Sleep(1)
+						  // yields the core for ~1ms. Only spin with Sleep(0) for the final
+						  // couple of milliseconds so the frame cadence stays accurate.
+						  if (limit - (now - prevTime) > 2)
+						  	::Sleep(1);
+						  else
+						  	::Sleep(0);
 						  now = timeGetTime();
 					  }
 					  //Int slept = now - prevTime;

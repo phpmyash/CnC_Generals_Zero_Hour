@@ -897,10 +897,56 @@ void CPUDetectClass::Init_Processor_Features()
 	}
 }
 
+#ifdef WIN32
+// GlobalMemoryStatusEx() is not declared by the VC6-era Platform SDK, so declare
+// a binary-compatible structure and resolve the function at run time. This keeps
+// the code building with the original toolchain while still working on machines
+// with 4GB or more of RAM, where the legacy GlobalMemoryStatus() saturates (and
+// may report -1) because its fields are only 32 bits wide.
+struct MemoryStatusEx_Compat
+{
+	DWORD dwLength;
+	DWORD dwMemoryLoad;
+	unsigned __int64 ullTotalPhys;
+	unsigned __int64 ullAvailPhys;
+	unsigned __int64 ullTotalPageFile;
+	unsigned __int64 ullAvailPageFile;
+	unsigned __int64 ullTotalVirtual;
+	unsigned __int64 ullAvailVirtual;
+	unsigned __int64 ullAvailExtendedVirtual;
+};
+typedef BOOL (WINAPI *GlobalMemoryStatusEx_Compat_t)(MemoryStatusEx_Compat*);
+
+// Clamp a 64-bit byte count into the 32-bit accessors this class exposes.
+static unsigned Clamp_To_Unsigned(unsigned __int64 value)
+{
+	return (value > (unsigned __int64)0xFFFFFFFFu) ? 0xFFFFFFFFu : (unsigned)value;
+}
+#endif
+
 void CPUDetectClass::Init_Memory()
 {
 #ifdef WIN32
 
+	MemoryStatusEx_Compat memEx;
+	memEx.dwLength = sizeof(memEx);
+	GlobalMemoryStatusEx_Compat_t pGlobalMemoryStatusEx = NULL;
+	HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
+	if (kernel32 != NULL)
+		pGlobalMemoryStatusEx = (GlobalMemoryStatusEx_Compat_t)GetProcAddress(kernel32, "GlobalMemoryStatusEx");
+
+	if (pGlobalMemoryStatusEx != NULL && pGlobalMemoryStatusEx(&memEx))
+	{
+		TotalPhysicalMemory     = Clamp_To_Unsigned(memEx.ullTotalPhys);
+		AvailablePhysicalMemory = Clamp_To_Unsigned(memEx.ullAvailPhys);
+		TotalPageMemory         = Clamp_To_Unsigned(memEx.ullTotalPageFile);
+		AvailablePageMemory     = Clamp_To_Unsigned(memEx.ullAvailPageFile);
+		TotalVirtualMemory      = Clamp_To_Unsigned(memEx.ullTotalVirtual);
+		AvailableVirtualMemory  = Clamp_To_Unsigned(memEx.ullAvailVirtual);
+		return;
+	}
+
+	// Fallback for pre-Windows 2000 systems.
 	MEMORYSTATUS mem;
    GlobalMemoryStatus(&mem);
 
