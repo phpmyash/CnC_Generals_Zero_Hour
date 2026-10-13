@@ -1,0 +1,28 @@
+From: Andrei <andrei@luta.email>
+Subject: [PATCH] Only pick the SSE2 memcchr when the compiler can emit SSE2
+
+MinGW-w64 defines _M_IX86 for every 32-bit target, including the default
+i686 target that has SSE2 disabled, so stringex.h selected the SSE2
+implementation and GCC refused to inline the intrinsics:
+
+  emmintrin.h: error: inlining failed in call to 'always_inline'
+  '_mm_movemask_epi8': target specific option mismatch
+
+Treat _M_IX86/_M_X64 as an SSE2 signal only under MSVC, which always has
+SSE2 on those targets, and rely on __SSE2__ for GCC and Clang.
+---
+ Dependencies/Utility/Utility/stringex.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Dependencies/Utility/Utility/stringex.h b/Dependencies/Utility/Utility/stringex.h
+--- a/Dependencies/Utility/Utility/stringex.h
++++ b/Dependencies/Utility/Utility/stringex.h
+@@ -308,7 +308,7 @@
+ #if defined(_MSC_VER) && _MSC_VER < 1300
+   #include "stringex_memcchr_x86asm.inl"
+ #else
+-  #if defined(_M_IX86) || defined(_M_X64) || defined(__SSE2__)
++  #if (defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))) || defined(__SSE2__)
+     #include <emmintrin.h>
+     #if defined(_MSC_VER)
+       #include <intrin.h>

@@ -1,0 +1,26 @@
+From: Andrei <andrei@luta.email>
+Subject: [PATCH] MinGW: target SSE2 like the Visual Studio 2022 x86 build does
+
+Visual Studio 2022 compiles 32-bit x86 with /arch:SSE2 by default, so the
+community Windows builds already require SSE2 (every x86 CPU since 2004).
+GCC's i686 default is plain x87 without SSE2, which makes the MinGW build
+both slower and unable to use the SSE2 code paths in the engine. Only the
+instruction set is enabled; scalar floating point stays on x87 so the
+MinGW build keeps the same precision behaviour as before.
+---
+ cmake/mingw.cmake | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/cmake/mingw.cmake b/cmake/mingw.cmake
+--- a/cmake/mingw.cmake
++++ b/cmake/mingw.cmake
+@@ -22,6 +22,9 @@ if(MINGW)
+     # Compatibility flags for legacy code
+     add_compile_options(
+         -fno-strict-aliasing        # Avoid type-punning issues with DX8/COM
++        -msse2                      # Match the VS2022 x86 default (/arch:SSE2); required for the
++                                    # SSE2 intrinsics used in Dependencies/Utility and enables
++                                    # vectorized code paths. Scalar FP math stays on x87.
+     )
+ 
+     # MSVC compatibility macros for MinGW
