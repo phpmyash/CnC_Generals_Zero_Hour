@@ -26,6 +26,7 @@ The patches in this directory are applied on top of that project by
 | `0001-link-large-address-aware.patch` | Links the game executable with the large-address-aware flag so 64-bit Windows gives the 32-bit process 4GB of address space instead of 2GB. |
 | `0002-stringex-sse2-guard.patch` | Fixes a build break in the MinGW cross build: the SSE2 string helper was selected on every 32-bit MinGW target, including ones compiled without SSE2. |
 | `0003-mingw-enable-sse2.patch` | Compiles the MinGW build with SSE2 enabled, matching the Visual Studio 2022 x86 default. Scalar floating point stays on x87. |
+| `0004-mingw-link-order.patch` | Fixes the final link in the MinGW cross build: the engine and device libraries reference each other, so they are linked as a rescanned group, and the Winsock import library is added for the FTP code. |
 
 ## Building
 

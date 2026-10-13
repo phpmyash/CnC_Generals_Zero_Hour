@@ -1,0 +1,75 @@
+From: Andrei <andrei@luta.email>
+Subject: [PATCH] MinGW: resolve the engine/device link cycle and Winsock
+
+GNU ld resolves static libraries in the order given and does not go
+back, unlike the MSVC linker. The game engine library references
+symbols defined in the device library (OSDisplaySetBusyState,
+ReloadAllTextures, MOTDSystem) while the device library depends on the
+engine, so the final link of generalszh.exe failed with undefined
+references. Wrap the two in a rescanned link group for MinGW.
+
+FTP.cpp in WWDownload uses listen/accept from Winsock, but ws2_32 only
+appeared on the link line ahead of that library (pulled in by GameSpy),
+so add it to the MinGW system library list, which is emitted last.
+---
+diff --git a/Generals/Code/Main/CMakeLists.txt b/Generals/Code/Main/CMakeLists.txt
+index b381fca..cdd20e9 100644
+--- a/Generals/Code/Main/CMakeLists.txt
++++ b/Generals/Code/Main/CMakeLists.txt
+@@ -9,13 +9,20 @@ endif()
+ 
+ target_link_libraries(g_generals PRIVATE
+     comctl32
+-    g_gameenginedevice
+     gi_always
+     imm32
+     vfw32
+     winmm
+ )
+ 
++if(MINGW)
++    # GNU ld is order sensitive and the engine and device libraries reference
++    # each other, so let the linker rescan the pair until everything resolves.
++    target_link_libraries(g_generals PRIVATE "$<LINK_GROUP:RESCAN,g_gameenginedevice,g_gameengine>")
++else()
++    target_link_libraries(g_generals PRIVATE g_gameenginedevice)
++endif()
++
+ # Let 64-bit Windows give this 32-bit process a 4GB address space instead of 2GB.
+ if(MSVC)
+     target_link_options(g_generals PRIVATE "/LARGEADDRESSAWARE")
+diff --git a/GeneralsMD/Code/Main/CMakeLists.txt b/GeneralsMD/Code/Main/CMakeLists.txt
+index 6c51c0b..2935187 100644
+--- a/GeneralsMD/Code/Main/CMakeLists.txt
++++ b/GeneralsMD/Code/Main/CMakeLists.txt
+@@ -12,10 +12,17 @@ target_link_libraries(z_generals PRIVATE
+     imm32
+     vfw32
+     winmm
+-    z_gameenginedevice
+     zi_always
+ )
+ 
++if(MINGW)
++    # GNU ld is order sensitive and the engine and device libraries reference
++    # each other, so let the linker rescan the pair until everything resolves.
++    target_link_libraries(z_generals PRIVATE "$<LINK_GROUP:RESCAN,z_gameenginedevice,z_gameengine>")
++else()
++    target_link_libraries(z_generals PRIVATE z_gameenginedevice)
++endif()
++
+ # Let 64-bit Windows give this 32-bit process a 4GB address space instead of 2GB.
+ if(MSVC)
+     target_link_options(z_generals PRIVATE "/LARGEADDRESSAWARE")
+diff --git a/cmake/mingw.cmake b/cmake/mingw.cmake
+index b166fbe..ac78d40 100644
+--- a/cmake/mingw.cmake
++++ b/cmake/mingw.cmake
+@@ -69,6 +69,7 @@ if(MINGW)
+         uuid        # COM GUIDs
+         vfw32       # Video for Windows (AVIFile functions)
+         winmm       # Multimedia (timeGetTime, etc.)
++        ws2_32      # Winsock (listen/accept in WWDownload FTP.cpp)
+     )
+ 
+     # Note: MinGW-w64 does not provide comsuppw (COM support utilities library).
