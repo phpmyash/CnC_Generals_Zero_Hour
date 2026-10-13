@@ -27,6 +27,7 @@ The patches in this directory are applied on top of that project by
 | `0002-stringex-sse2-guard.patch` | Fixes a build break in the MinGW cross build: the SSE2 string helper was selected on every 32-bit MinGW target, including ones compiled without SSE2. |
 | `0003-mingw-enable-sse2.patch` | Compiles the MinGW build with SSE2 enabled, matching the Visual Studio 2022 x86 default. Scalar floating point stays on x87. |
 | `0004-mingw-link-order.patch` | Fixes the final link in the MinGW cross build: the engine and device libraries reference each other, so they are linked as a rescanned group, and the Winsock import library is added for the FTP code. |
+| `0005-mingw-static-d3dx8.patch` | Links the DirectX 8 SDK's static `d3dx8.lib` instead of mingw's import library for the debug `d3dx8d.dll`, which end-user machines do not have. Adds a tiny MSVC runtime shim the static library needs. Without this the MinGW build cannot start on a normal Windows install. |
 
 ## Building
 
@@ -36,6 +37,15 @@ scripts/build-zh-patched.sh
 ```
 
 The result is `build/zh-patched/generalszh.exe`.
+
+The executable imports only standard Windows DLLs. Audio (`mss32.dll`) and
+video (`binkw32.dll`) are loaded at run time from the game folder, which is
+why it must sit next to the original `generals.exe`.
+
+Verified so far: the build completes, the PE header carries the
+large-address-aware flag, and the import table contains no SDK-only DLLs.
+The executable has not yet been run against the game data; that needs a
+Windows machine with the game installed.
 
 ## Installing into the Steam copy
 

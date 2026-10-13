@@ -1,0 +1,224 @@
+From: Andrei <andrei@luta.email>
+Subject: [PATCH] MinGW: link the static d3dx8.lib instead of the debug d3dx8d.dll
+
+mingw-w64 only ships an import library for the DirectX 8 SDK's debug
+helper DLL (d3dx8d.dll). That DLL is not present on end-user machines,
+so a MinGW-built generalszh.exe fails to start with a missing DLL error.
+
+GNU ld can consume MSVC COFF archives, so link the SDK's static
+d3dx8.lib (already bundled by min-dx8-sdk for MSVC builds) and the
+SDK's dxguid.lib, whose COMDAT GUIDs merge with the copies in d3dx8.lib
+where mingw's single-object libdxguid.a clashes. The static library
+references seven MSVC CRT helpers (operator new/delete, the vector
+constructor/destructor iterators, _alloca_probe, _aullshr and the
+_except_list TIB offset); Dependencies/MSVCRTCompat provides them.
+
+After this the executable imports only standard Windows DLLs. Miles and
+Bink continue to be loaded at run time from the game folder.
+---
+diff --git a/Dependencies/CMakeLists.txt b/Dependencies/CMakeLists.txt
+index 9bb1ba3..34bca53 100644
+--- a/Dependencies/CMakeLists.txt
++++ b/Dependencies/CMakeLists.txt
+@@ -16,6 +16,10 @@ add_subdirectory(Utility)
+ add_subdirectory(Bink)
+ add_subdirectory(Miles)
+ 
++if(MINGW)
++    add_subdirectory(MSVCRTCompat)
++endif()
++
+ if (WIN32)
+     add_subdirectory(DbgHelp)
+     add_subdirectory(Usp10)
+diff --git a/Dependencies/MSVCRTCompat/CMakeLists.txt b/Dependencies/MSVCRTCompat/CMakeLists.txt
+new file mode 100644
+index 0000000..afbb5d3
+--- /dev/null
++++ b/Dependencies/MSVCRTCompat/CMakeLists.txt
+@@ -0,0 +1,6 @@
++# Minimal MSVC CRT helpers so the DirectX 8 SDK's MSVC-built static d3dx8.lib links with MinGW-w64.
++# See cmake/dx8.cmake for why the static library is used instead of mingw's d3dx8d import library.
++add_library(deps_msvcrt_compat STATIC
++    msvcrt_compat.cpp
++    msvcrt_compat_x86.c
++)
+diff --git a/Dependencies/MSVCRTCompat/msvcrt_compat.cpp b/Dependencies/MSVCRTCompat/msvcrt_compat.cpp
+new file mode 100644
+index 0000000..a912fc4
+--- /dev/null
++++ b/Dependencies/MSVCRTCompat/msvcrt_compat.cpp
+@@ -0,0 +1,41 @@
++// Minimal MSVC CRT helpers so the MSVC-built static d3dx8.lib links with MinGW-w64.
++#include <stdlib.h>
++#include <stddef.h>
++
++extern "C" {
++
++// operator new / operator delete with MSVC decorated names (VC6-era d3dx8 expects
++// new to return NULL on failure rather than throw).
++void* msvc_operator_new(size_t n);
++void  msvc_operator_delete(void* p);
++
++void* msvc_operator_new(size_t n) { return malloc(n ? n : 1); }
++void  msvc_operator_delete(void* p) { free(p); }
++
++// MSVC "vector constructor iterator" / "vector destructor iterator":
++// construct or destroy `count` objects of `size` bytes in place using __thiscall ctor/dtor.
++typedef void (__thiscall *msvc_ctor_t)(void* self);
++typedef void (__thiscall *msvc_dtor_t)(void* self);
++
++void __stdcall msvc_vec_ctor(void* ptr, unsigned size, int count, msvc_ctor_t ctor, msvc_dtor_t dtor);
++void __stdcall msvc_vec_dtor(void* ptr, unsigned size, int count, msvc_dtor_t dtor);
++
++void __stdcall msvc_vec_ctor(void* ptr, unsigned size, int count, msvc_ctor_t ctor, msvc_dtor_t /*dtor*/)
++{
++	char* p = static_cast<char*>(ptr);
++	for (int i = 0; i < count; ++i, p += size)
++		ctor(p);
++}
++
++void __stdcall msvc_vec_dtor(void* ptr, unsigned size, int count, msvc_dtor_t dtor)
++{
++	// MSVC destroys in reverse order.
++	char* p = static_cast<char*>(ptr) + (size_t)size * (size_t)count;
++	for (int i = 0; i < count; ++i)
++	{
++		p -= size;
++		dtor(p);
++	}
++}
++
++} // extern "C"
+diff --git a/Dependencies/MSVCRTCompat/msvcrt_compat_x86.c b/Dependencies/MSVCRTCompat/msvcrt_compat_x86.c
+new file mode 100644
+index 0000000..3703c87
+--- /dev/null
++++ b/Dependencies/MSVCRTCompat/msvcrt_compat_x86.c
+@@ -0,0 +1,76 @@
++// Minimal MSVC CRT helpers (x86) so the MSVC-built static d3dx8.lib links with MinGW-w64.
++// Written as a file-scope asm block so the build does not need to enable the ASM language.
++// GAS only accepts the MSVC-decorated names (??2@YAPAXI@Z etc.) when quoted, which is why
++// the entry points live here as tail-jump thunks to the C-named functions in msvcrt_compat.cpp.
++#if defined(__MINGW32__) && defined(__i386__)
++__asm__(
++	"# Minimal MSVC CRT helpers (x86 assembly) for linking the MSVC static d3dx8.lib with MinGW-w64.\n"
++	"	.text\n"
++	"\n"
++	"# __except_list: MSVC CRT absolute symbol, offset of the SEH chain head inside the TIB (fs:[0]).\n"
++	"	.globl	__except_list\n"
++	"	.set	__except_list, 0\n"
++	"\n"
++	"# __alloca_probe (a.k.a. _chkstk): eax = bytes to reserve. Touch every page below esp so the\n"
++	"# guard page is hit in order, then subtract eax from esp. Preserves all registers except eax.\n"
++	"	.globl	__alloca_probe\n"
++	"__alloca_probe:\n"
++	"	pushl	%ecx\n"
++	"	leal	8(%esp), %ecx          # ecx = caller's esp (above saved ecx and return address)\n"
++	"1:\n"
++	"	cmpl	$0x1000, %eax\n"
++	"	jb	2f\n"
++	"	subl	$0x1000, %ecx\n"
++	"	subl	$0x1000, %eax\n"
++	"	testl	%eax, (%ecx)           # probe the page\n"
++	"	jmp	1b\n"
++	"2:\n"
++	"	subl	%eax, %ecx\n"
++	"	testl	%eax, (%ecx)           # probe the last partial page\n"
++	"	movl	%esp, %eax             # eax = current esp (points at saved ecx)\n"
++	"	movl	%ecx, %esp             # switch to the new stack pointer\n"
++	"	movl	(%eax), %ecx           # restore ecx from old stack\n"
++	"	pushl	4(%eax)                # re-push the return address\n"
++	"	ret\n"
++	"\n"
++	"# __aullshr: unsigned 64-bit shift right. Value in edx:eax, count in cl, result in edx:eax.\n"
++	"	.globl	__aullshr\n"
++	"__aullshr:\n"
++	"	cmpb	$64, %cl\n"
++	"	jae	3f\n"
++	"	cmpb	$32, %cl\n"
++	"	jae	4f\n"
++	"	shrdl	%cl, %edx, %eax\n"
++	"	shrl	%cl, %edx\n"
++	"	ret\n"
++	"4:\n"
++	"	movl	%edx, %eax\n"
++	"	xorl	%edx, %edx\n"
++	"	andb	$31, %cl\n"
++	"	shrl	%cl, %eax\n"
++	"	ret\n"
++	"3:\n"
++	"	xorl	%eax, %eax\n"
++	"	xorl	%edx, %edx\n"
++	"	ret\n"
++	"\n"
++	"\n"
++	"# MSVC-decorated entry points. GAS only accepts these names when quoted, and GCC cannot emit\n"
++	"# them from C++, so provide tail-jump thunks to the C-named implementations in msvcrt_compat.cpp.\n"
++	"	.globl	\"??2@YAPAXI@Z\"\n"
++	"\"??2@YAPAXI@Z\":\n"
++	"	jmp	_msvc_operator_new\n"
++	"\n"
++	"	.globl	\"??3@YAXPAX@Z\"\n"
++	"\"??3@YAXPAX@Z\":\n"
++	"	jmp	_msvc_operator_delete\n"
++	"\n"
++	"	.globl	\"??_L@YGXPAXIHP6EX0@Z1@Z\"\n"
++	"\"??_L@YGXPAXIHP6EX0@Z1@Z\":\n"
++	"	jmp	_msvc_vec_ctor@20\n"
++	"\n"
++	"	.globl	\"??_M@YGXPAXIHP6EX0@Z@Z\"\n"
++	"\"??_M@YGXPAXIHP6EX0@Z@Z\":\n"
++	"	jmp	_msvc_vec_dtor@16\n"
++);
++#endif
+diff --git a/cmake/dx8.cmake b/cmake/dx8.cmake
+index dd08f56..686234f 100644
+--- a/cmake/dx8.cmake
++++ b/cmake/dx8.cmake
+@@ -5,3 +5,21 @@ FetchContent_Declare(
+ )
+ 
+ FetchContent_MakeAvailable(dx8)
++
++if(MINGW)
++    # mingw-w64 only ships an import library for the DirectX 8 SDK's *debug* d3dx8d.dll, which is
++    # not installed on end-user systems, so an executable linked against it will not start.
++    # GNU ld can read MSVC COFF archives, so link the SDK's static d3dx8.lib instead, together with
++    # the handful of MSVC CRT helpers it references (deps_msvcrt_compat). The SDK's dxguid.lib is
++    # used as well: its GUIDs are COMDAT and merge with the copies inside d3dx8.lib, whereas
++    # mingw's libdxguid.a is one plain object that clashes with them.
++    set_target_properties(d3d8lib PROPERTIES INTERFACE_LINK_LIBRARIES
++        "d3d8;dinput8;${dx8_SOURCE_DIR}/d3dx8.lib;${dx8_SOURCE_DIR}/dxguid.lib;deps_msvcrt_compat")
++
++    # Alias for targets that reference d3dx8 directly.
++    if(NOT TARGET d3dx8)
++        add_library(d3dx8 INTERFACE IMPORTED GLOBAL)
++        set_target_properties(d3dx8 PROPERTIES INTERFACE_LINK_LIBRARIES
++            "${dx8_SOURCE_DIR}/d3dx8.lib;${dx8_SOURCE_DIR}/dxguid.lib;deps_msvcrt_compat")
++    endif()
++endif()
+diff --git a/cmake/mingw.cmake b/cmake/mingw.cmake
+index ac78d40..8e1481b 100644
+--- a/cmake/mingw.cmake
++++ b/cmake/mingw.cmake
+@@ -77,18 +77,7 @@ if(MINGW)
+     # are provided by Dependencies/Utility/Utility/comsupp_compat.h as header-only
+     # implementations. No library linking required.
+ 
+-    # MinGW-w64 compatibility: Create d3dx8 as an alias to d3dx8d
+-    # MinGW-w64 only provides libd3dx8d.a (debug library), not libd3dx8.a
+-    # The min-dx8-sdk (dx8.cmake) handles this correctly via d3d8lib interface target,
+-    # but for compatibility with direct library references in main executables,
+-    # we create an alias so that linking to d3dx8 automatically uses d3dx8d
+-    if(NOT TARGET d3dx8)
+-        add_library(d3dx8 INTERFACE IMPORTED GLOBAL)
+-        set_target_properties(d3dx8 PROPERTIES
+-            INTERFACE_LINK_LIBRARIES "d3dx8d"
+-        )
+-        message(STATUS "Created d3dx8 -> d3dx8d alias for MinGW-w64")
+-    endif()
++    # d3dx8 for MinGW is set up in cmake/dx8.cmake (static d3dx8.lib + MSVC CRT shim).
+ 
+     message(STATUS "MinGW-w64 configuration complete")
+ endif()
