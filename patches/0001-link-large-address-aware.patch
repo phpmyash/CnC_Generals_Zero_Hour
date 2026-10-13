@@ -1,0 +1,52 @@
+From: Andrei <andrei@luta.email>
+Subject: [PATCH] Link game executables as large address aware
+
+The retail game and the community builds are 32-bit and run with the
+default 2GB user address space. Marking the executable large address
+aware lets 64-bit Windows give the process a 4GB address space, which
+is the single biggest memory-related stability improvement available
+without a full 64-bit port. This is the same change the community has
+applied to the retail generals.exe for years with LAA patchers.
+
+Applies to both the MSVC and MinGW link steps.
+---
+ Generals/Code/Main/CMakeLists.txt   | 8 ++++++++
+ GeneralsMD/Code/Main/CMakeLists.txt | 8 ++++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/Generals/Code/Main/CMakeLists.txt b/Generals/Code/Main/CMakeLists.txt
+--- a/Generals/Code/Main/CMakeLists.txt
++++ b/Generals/Code/Main/CMakeLists.txt
+@@ -16,6 +16,14 @@ target_link_libraries(g_generals PRIVATE
+     winmm
+ )
+ 
++# Let 64-bit Windows give this 32-bit process a 4GB address space instead of 2GB.
++if(MSVC)
++    target_link_options(g_generals PRIVATE "/LARGEADDRESSAWARE")
++elseif(MINGW)
++    target_link_options(g_generals PRIVATE "-Wl,--large-address-aware")
++endif()
++
++
+ # TODO Originally referred to build host and user, replace with git info perhaps?
+ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/GeneratedVersion.h
+ "#pragma once
+diff --git a/GeneralsMD/Code/Main/CMakeLists.txt b/GeneralsMD/Code/Main/CMakeLists.txt
+--- a/GeneralsMD/Code/Main/CMakeLists.txt
++++ b/GeneralsMD/Code/Main/CMakeLists.txt
+@@ -16,6 +16,14 @@ target_link_libraries(z_generals PRIVATE
+     zi_always
+ )
+ 
++# Let 64-bit Windows give this 32-bit process a 4GB address space instead of 2GB.
++if(MSVC)
++    target_link_options(z_generals PRIVATE "/LARGEADDRESSAWARE")
++elseif(MINGW)
++    target_link_options(z_generals PRIVATE "-Wl,--large-address-aware")
++endif()
++
++
+ # TODO Originally referred to build host and user, replace with git info perhaps?
+ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/GeneratedVersion.h
+ "#pragma once

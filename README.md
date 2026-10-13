@@ -4,6 +4,18 @@
 This repository includes source code for Command & Conquer Generals, and its expansion pack Zero Hour. This release provides support to the Steam Workshop for both games ([C&C Generals](https://steamcommunity.com/workshop/browse/?appid=2229870) and [C&C Generals - Zero Hour](https://steamcommunity.com/workshop/browse/?appid=2732960)).
 
 
+## Modern Windows patch (this fork)
+
+This fork adds a reproducible way to build a patched `generalszh.exe` for the
+Steam or EA App copy of Zero Hour, cross-compiled on Linux. See
+[patches/README.md](patches/README.md) and `scripts/build-zh-patched.sh`.
+
+The original Visual C++ 6 project files in this tree were also updated to
+link large address aware, detect more than 2GB of RAM correctly, and stop the
+frame limiter from spinning a core, for anyone who still builds with the
+original toolchain.
+
+
 ## Dependencies
 
 If you wish to rebuild the source code and tools successfully you will need to find or write new replacements (or remove the code using them entirely) for the following libraries;
